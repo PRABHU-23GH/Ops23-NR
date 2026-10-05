@@ -1,0 +1,6 @@
+"""Ops23-NR Application Package.
+
+Intelligent Cloud Observability & Self-Healing Platform.
+"""
+
+__version__ = "0.1.0"
