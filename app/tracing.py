@@ -34,6 +34,7 @@ logger = logging.getLogger("ops23.app")
 # Global singleton references for tracing lifecycle
 _tracer_provider: Optional[TracerProvider] = None
 _in_memory_exporter: Optional[InMemorySpanExporter] = None
+_exporter_attached: bool = False
 
 
 def parse_otlp_headers(headers_str: str) -> Dict[str, str]:
@@ -86,17 +87,21 @@ def create_span_exporter(settings: Settings) -> Optional[SpanExporter]:
             # Safe local fallback: no remote endpoint configured, avoid crashing or network errors
             return None
 
+        # Normalize endpoint: ensure standard /v1/traces signal path for OTLP HTTP
+        target_endpoint = endpoint if endpoint.endswith("/v1/traces") else f"{endpoint.rstrip('/')}/v1/traces"
+
         try:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
                 OTLPSpanExporter as OTLPHttpSpanExporter,
             )
+
             return OTLPHttpSpanExporter(
-                endpoint=endpoint,
+                endpoint=target_endpoint,
                 headers=headers if headers else None,
             )
         except Exception as exc:
             logger.warning(
-                f"Failed to initialize OTLP exporter for endpoint '{endpoint}': {exc}. Tracing will operate locally without remote export."
+                f"Failed to initialize OTLP exporter for endpoint '{target_endpoint}': {exc}. Tracing will operate locally without remote export."
             )
             return None
 
@@ -106,7 +111,7 @@ def create_span_exporter(settings: Settings) -> Optional[SpanExporter]:
 
 def init_tracing(settings: Optional[Settings] = None) -> Optional[TracerProvider]:
     """Initialize OpenTelemetry TracerProvider with resource attributes and span processors."""
-    global _tracer_provider, _in_memory_exporter
+    global _tracer_provider, _in_memory_exporter, _exporter_attached
     app_settings = settings or get_settings()
 
     if not app_settings.OTEL_ENABLED:
@@ -153,14 +158,15 @@ def init_tracing(settings: Optional[Settings] = None) -> Optional[TracerProvider
             )
             return None
 
-    # Attach exporter to the active provider if configured
-    exporter = create_span_exporter(app_settings)
-    if exporter is not None and _tracer_provider is not None:
-        if isinstance(exporter, InMemorySpanExporter):
-            # Check if SimpleSpanProcessor with this exporter is already added
-            _tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-        else:
-            _tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+    # Attach exporter to the active provider once
+    if not _exporter_attached and _tracer_provider is not None:
+        exporter = create_span_exporter(app_settings)
+        if exporter is not None:
+            if isinstance(exporter, InMemorySpanExporter):
+                _tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+            else:
+                _tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+            _exporter_attached = True
 
     return _tracer_provider
 
