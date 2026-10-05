@@ -27,3 +27,20 @@ output "application_url" {
   description = "Target URL for the Ops23-NR FastAPI service"
   value       = "http://${aws_instance.app_server.public_ip}:8000"
 }
+
+output "remediation_lambda_role_arn" {
+  description = "ARN of the dedicated remediation Lambda execution IAM role"
+  value       = aws_iam_role.remediation_lambda_role.arn
+}
+
+output "remediation_idempotency_table_name" {
+  description = "Name of the DynamoDB table used for remediation idempotency"
+  value       = aws_dynamodb_table.remediation_idempotency.name
+}
+
+output "remediation_webhook_url" {
+  description = "API Gateway endpoint URL for New Relic remediation webhook"
+  value       = "${aws_apigatewayv2_api.remediation_api.api_endpoint}/remediate"
+}
+
+
