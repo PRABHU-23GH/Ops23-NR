@@ -62,14 +62,15 @@ class RemediationApprovalService:
         self.settings = settings or get_settings()
         self.storage = storage or ApprovalStorage(
             table_name=self.settings.REMEDIATION_APPROVAL_TABLE_NAME,
-            region_name=self.settings.AWS_REGION,
+            region_name=getattr(self.settings, "AWS_REGION", "ap-south-1"),
         )
         self._lambda_client = lambda_client
 
     @property
     def lambda_client(self) -> Any:
         if self._lambda_client is None:
-            self._lambda_client = boto3.client("lambda", region_name=self.settings.AWS_REGION)
+            region = getattr(self.settings, "AWS_REGION", "ap-south-1")
+            self._lambda_client = boto3.client("lambda", region_name=region)
         return self._lambda_client
 
     def validate_safety_contract(self, request: CreateApprovalRequest) -> Tuple[bool, str]:

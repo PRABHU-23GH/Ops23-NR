@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     BEDROCK_MODEL_ID: str = "anthropic.claude-3-haiku-20240307-v1:0"
     BEDROCK_REGION: str = "ap-south-1"
 
+    # AWS Configuration
+    AWS_REGION: str = "ap-south-1"
+
     # Human-in-the-Loop AI Remediation Approval (Phase 8)
     REMEDIATION_APPROVAL_TABLE_NAME: str = "Ops23-NR-dev-remediation-approvals"
     REMEDIATION_APPROVAL_TTL_SECONDS: int = 900  # 15 minutes default TTL

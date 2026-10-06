@@ -52,7 +52,7 @@ class ApprovalStorage:
     ):
         settings = get_settings()
         self.table_name = table_name or settings.REMEDIATION_APPROVAL_TABLE_NAME
-        self.region_name = region_name or settings.AWS_REGION
+        self.region_name = region_name or getattr(settings, "AWS_REGION", "ap-south-1")
         self._dynamodb_resource = dynamodb_resource
         self._table = None
 

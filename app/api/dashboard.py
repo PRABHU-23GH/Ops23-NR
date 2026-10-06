@@ -1,6 +1,7 @@
 """FastAPI router for the Ops23-NR Intelligent Cloud Operations Center Dashboard.
 
 Phase 9: High-fidelity SRE Command Center dashboard & telemetry aggregation.
+Styled in Light Mode with Purple aesthetic inspired by Kiro.
 """
 
 from datetime import datetime, timezone
@@ -28,12 +29,13 @@ def get_system_telemetry() -> Dict[str, Any]:
     cpu_percent = 12.4
     memory_percent = 44.2
 
-    try:
-        import psutil
-        cpu_percent = round(psutil.cpu_percent(interval=None) or 12.4, 1)
-        memory_percent = round(psutil.virtual_memory().percent, 1)
-    except Exception:
-        # Graceful baseline if psutil is not installed
+    if psutil:
+        try:
+            cpu_percent = round(psutil.cpu_percent(interval=None) or 12.4, 1)
+            memory_percent = round(psutil.virtual_memory().percent, 1)
+        except Exception:
+            pass
+    else:
         cpu_percent = round(11.8 + random.uniform(0.1, 1.2), 1)
         memory_percent = round(43.9 + random.uniform(0.1, 0.8), 1)
 
@@ -101,9 +103,9 @@ async def get_dashboard_overview(
         },
         "timeline": [
             {"step": 1, "title": "Incident detected", "status": "completed", "detail": "Service degradation alert triggered"},
-            {"step": 2, "title": "AI RCA completed", "status": "completed", "detail": "Bedrock Claude 3 Haiku identified crash (96% confidence)"},
-            {"step": 3, "title": "Human approval required", "status": "pending", "detail": "Awaiting SRE authorization (Prabhu)"},
-            {"step": 4, "title": "Lambda → SSM dispatch", "status": "waiting", "detail": "SSM RunShellScript restart command"},
+            {"step": 2, "title": "AI RCA completed", "status": "completed", "detail": "Bedrock Claude 3 Haiku diagnosis (96% confidence)"},
+            {"step": 3, "title": "Awaiting Human Approval", "status": "pending", "detail": "Awaiting SRE authorization (Prabhu)"},
+            {"step": 4, "title": "Lambda → SSM", "status": "waiting", "detail": "SSM RunShellScript restart command"},
             {"step": 5, "title": "Service recovered", "status": "waiting", "detail": "Health verification passes (HTTP 200)"},
         ],
     }
@@ -115,29 +117,42 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OPS23-NR — Intelligent Cloud Operations Center</title>
-  <meta name="description" content="Ops23-NR SRE Command Center: Full-stack Cloud Observability, Bedrock AI RCA, and Human-in-the-Loop Remediation.">
+  <meta name="description" content="Ops23-NR SRE Command Center: Cloud Observability, Bedrock AI RCA, and Human-in-the-Loop Remediation.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-dark: #0a0d14;
-      --bg-card: rgba(17, 24, 39, 0.75);
-      --bg-card-hover: rgba(24, 33, 53, 0.85);
-      --border-subtle: rgba(255, 255, 255, 0.08);
-      --border-accent: rgba(59, 130, 246, 0.3);
-      --text-main: #f3f4f6;
-      --text-muted: #9ca3af;
-      --text-dim: #6b7280;
-      --emerald: #10b981;
-      --emerald-glow: rgba(16, 185, 129, 0.25);
-      --amber: #f59e0b;
-      --amber-glow: rgba(245, 158, 11, 0.25);
-      --rose: #ef4444;
-      --rose-glow: rgba(239, 68, 68, 0.25);
-      --blue: #3b82f6;
-      --blue-glow: rgba(59, 130, 246, 0.3);
-      --purple: #8b5cf6;
+      /* Kiro-Inspired Light Mode with Vibrant Purple Accent */
+      --bg-page: #FAF8FF;
+      --bg-card: rgba(255, 255, 255, 0.96);
+      --bg-card-hover: #FFFFFF;
+      --border-subtle: #E9D5FF;
+      --border-accent: #7C3AED;
+      --text-main: #1E1B4B;
+      --text-muted: #5B5A75;
+      --text-dim: #8B85A8;
+      
+      --purple-primary: #7C3AED;
+      --purple-hover: #6D28D9;
+      --purple-light: #F5F3FF;
+      --purple-badge: #EDE9FE;
+      --purple-glow: rgba(124, 58, 237, 0.16);
+
+      --emerald: #059669;
+      --emerald-bg: #ECFDF5;
+      --emerald-border: #A7F3D0;
+      --emerald-glow: rgba(5, 150, 105, 0.2);
+
+      --rose: #DC2626;
+      --rose-bg: #FEF2F2;
+      --rose-border: #FECACA;
+      --rose-glow: rgba(220, 38, 38, 0.16);
+
+      --blue: #2563EB;
+      --blue-bg: #EFF6FF;
+      --blue-border: #BFDBFE;
+
       --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       --font-mono: 'JetBrains Mono', monospace;
     }
@@ -149,15 +164,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     body {
-      background-color: var(--bg-dark);
+      background-color: var(--bg-page);
       background-image: 
-        radial-gradient(circle at 15% 15%, rgba(59, 130, 246, 0.06) 0%, transparent 40%),
-        radial-gradient(circle at 85% 85%, rgba(139, 92, 246, 0.05) 0%, transparent 40%),
-        radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.03) 0%, transparent 60%);
+        radial-gradient(circle at 10% 10%, rgba(124, 58, 237, 0.07) 0%, transparent 45%),
+        radial-gradient(circle at 90% 90%, rgba(168, 85, 247, 0.06) 0%, transparent 45%),
+        radial-gradient(circle at 50% 50%, rgba(5, 150, 105, 0.03) 0%, transparent 60%);
       color: var(--text-main);
       font-family: var(--font-sans);
       min-height: 100vh;
-      padding: 24px;
+      padding: 28px 20px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -168,32 +183,34 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       max-width: 1040px;
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      gap: 22px;
     }
 
-    /* Glassmorphism Panel */
+    /* Kiro Clean Glass Card */
     .glass-panel {
       background: var(--bg-card);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border-subtle);
-      border-radius: 14px;
-      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.36);
-      transition: all 0.25s ease;
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(124, 58, 237, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .glass-panel:hover {
-      border-color: rgba(255, 255, 255, 0.14);
+      border-color: #DDD6FE;
+      box-shadow: 0 8px 30px rgba(124, 58, 237, 0.09), 0 2px 6px rgba(0, 0, 0, 0.04);
     }
 
     /* Header */
     header.header {
-      padding: 20px 28px;
+      padding: 22px 32px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       position: relative;
       overflow: hidden;
+      border-bottom: 2px solid var(--purple-badge);
     }
 
     header.header::after {
@@ -202,9 +219,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       bottom: 0;
       left: 0;
       right: 0;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, var(--blue), var(--purple), transparent);
-      opacity: 0.4;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--purple-primary), #C084FC, transparent);
+      opacity: 0.6;
     }
 
     .title-group {
@@ -214,37 +231,37 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     .brand-title {
-      font-size: 20px;
-      font-weight: 700;
+      font-size: 22px;
+      font-weight: 800;
       letter-spacing: 1.5px;
-      color: #ffffff;
+      color: var(--purple-primary);
       font-family: var(--font-mono);
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
     }
 
     .brand-subtitle {
       font-size: 13px;
       color: var(--text-muted);
-      font-weight: 400;
-      letter-spacing: 0.4px;
+      font-weight: 500;
+      letter-spacing: 0.3px;
     }
 
     .status-badge {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 8px 16px;
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.35);
+      padding: 8px 18px;
+      background: var(--emerald-bg);
+      border: 1px solid var(--emerald-border);
       border-radius: 30px;
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 700;
       font-family: var(--font-mono);
-      letter-spacing: 0.5px;
+      letter-spacing: 0.6px;
       color: var(--emerald);
-      box-shadow: 0 0 15px var(--emerald-glow);
+      box-shadow: 0 2px 8px var(--emerald-glow);
     }
 
     .pulse-dot {
@@ -257,39 +274,38 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     @keyframes pulse {
-      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-      70% { transform: scale(1.15); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.6); }
+      70% { transform: scale(1.15); box-shadow: 0 0 0 8px rgba(5, 150, 105, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(5, 150, 105, 0); }
     }
 
     /* Metrics Bar */
     .metrics-bar {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 14px;
+      gap: 16px;
     }
 
     .metric-card {
-      padding: 18px 22px;
+      padding: 20px 24px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      position: relative;
+      gap: 8px;
     }
 
     .metric-label {
       font-size: 11px;
       text-transform: uppercase;
-      letter-spacing: 1.2px;
+      letter-spacing: 1.3px;
       color: var(--text-dim);
-      font-weight: 600;
+      font-weight: 700;
       font-family: var(--font-mono);
     }
 
     .metric-value {
-      font-size: 26px;
-      font-weight: 700;
-      color: #ffffff;
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--text-main);
       font-family: var(--font-mono);
       display: flex;
       align-items: baseline;
@@ -298,35 +314,35 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     .metric-progress {
       width: 100%;
-      height: 4px;
-      background: rgba(255, 255, 255, 0.07);
-      border-radius: 2px;
+      height: 5px;
+      background: #F3E8FF;
+      border-radius: 3px;
       margin-top: 6px;
       overflow: hidden;
     }
 
     .metric-progress-bar {
       height: 100%;
-      border-radius: 2px;
-      background: linear-gradient(90deg, var(--blue), var(--purple));
-      transition: width 0.5s ease;
+      border-radius: 3px;
+      background: linear-gradient(90deg, var(--purple-primary), #A855F7);
+      transition: width 0.6s ease;
     }
 
-    /* Two-column layout */
+    /* Dashboard Two-Column Grid */
     .dashboard-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 20px;
+      gap: 22px;
     }
 
     .panel-header {
-      padding: 16px 22px;
+      padding: 18px 24px;
       border-bottom: 1px solid var(--border-subtle);
       font-size: 13px;
-      font-weight: 600;
+      font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 1.2px;
-      color: var(--text-muted);
+      color: var(--text-main);
       font-family: var(--font-mono);
       display: flex;
       justify-content: space-between;
@@ -334,20 +350,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     .panel-body {
-      padding: 20px 22px;
+      padding: 22px 24px;
     }
 
     /* Incidents Card */
     .incident-item {
-      background: rgba(239, 68, 68, 0.07);
-      border: 1px solid rgba(239, 68, 68, 0.3);
+      background: var(--rose-bg);
+      border: 1px solid var(--rose-border);
       border-left: 4px solid var(--rose);
-      border-radius: 10px;
-      padding: 16px 18px;
+      border-radius: 12px;
+      padding: 18px 20px;
       display: flex;
       flex-direction: column;
       gap: 8px;
-      box-shadow: 0 4px 16px var(--rose-glow);
+      box-shadow: 0 2px 10px var(--rose-glow);
     }
 
     .incident-header {
@@ -357,31 +373,32 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     .severity-tag {
-      padding: 3px 8px;
+      padding: 4px 10px;
       background: var(--rose);
-      color: #ffffff;
+      color: #FFFFFF;
       font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.8px;
+      font-weight: 800;
+      letter-spacing: 1px;
       border-radius: 4px;
       font-family: var(--font-mono);
     }
 
     .incident-time {
-      font-size: 11px;
-      color: var(--text-dim);
+      font-size: 12px;
+      color: var(--rose);
       font-family: var(--font-mono);
+      font-weight: 600;
     }
 
     .incident-title {
-      font-size: 15px;
-      font-weight: 600;
-      color: #ffffff;
+      font-size: 16px;
+      font-weight: 700;
+      color: #991B1B;
     }
 
     .incident-condition {
       font-size: 12px;
-      color: var(--text-muted);
+      color: #B91C1C;
     }
 
     /* Service Health */
@@ -395,10 +412,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 10px 14px;
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid rgba(255, 255, 255, 0.04);
-      border-radius: 8px;
+      padding: 12px 16px;
+      background: #FDFBFF;
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
     }
 
     .service-left {
@@ -408,16 +425,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     .service-dot {
-      width: 8px;
-      height: 8px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
       background: var(--emerald);
-      box-shadow: 0 0 8px var(--emerald);
+      box-shadow: 0 0 8px var(--emerald-glow);
     }
 
     .service-name {
-      font-size: 13px;
-      font-weight: 500;
+      font-size: 14px;
+      font-weight: 600;
       color: var(--text-main);
     }
 
@@ -425,53 +442,54 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       font-size: 12px;
       font-family: var(--font-mono);
       color: var(--emerald);
-      font-weight: 500;
+      font-weight: 700;
     }
 
     /* AI RCA Panel */
     .rca-section {
-      padding: 24px 28px;
+      padding: 28px 32px;
+      border: 1px solid #DDD6FE;
     }
 
     .rca-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: 22px;
     }
 
     .rca-title-wrap {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
     }
 
     .rca-icon {
-      font-size: 20px;
+      font-size: 22px;
     }
 
     .rca-title {
-      font-size: 16px;
-      font-weight: 700;
+      font-size: 17px;
+      font-weight: 800;
       letter-spacing: 1px;
       text-transform: uppercase;
       font-family: var(--font-mono);
-      color: #ffffff;
+      color: var(--purple-primary);
     }
 
     .confidence-badge {
-      padding: 6px 14px;
-      background: rgba(139, 92, 246, 0.15);
-      border: 1px solid rgba(139, 92, 246, 0.4);
+      padding: 6px 16px;
+      background: var(--purple-badge);
+      border: 1px solid #C4B5FD;
       border-radius: 20px;
-      color: #c4b5fd;
-      font-size: 12px;
+      color: var(--purple-primary);
+      font-size: 13px;
       font-family: var(--font-mono);
-      font-weight: 600;
+      font-weight: 700;
     }
 
     .rca-field {
-      margin-bottom: 18px;
+      margin-bottom: 20px;
     }
 
     .rca-label {
@@ -479,19 +497,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       text-transform: uppercase;
       letter-spacing: 1.2px;
       color: var(--text-dim);
-      font-weight: 600;
+      font-weight: 700;
       font-family: var(--font-mono);
       margin-bottom: 8px;
     }
 
     .rca-root-cause-box {
-      background: rgba(17, 24, 39, 0.9);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-left: 3px solid var(--purple);
-      border-radius: 8px;
-      padding: 14px 18px;
-      font-size: 14px;
-      color: #ffffff;
+      background: var(--purple-light);
+      border: 1px solid #DDD6FE;
+      border-left: 4px solid var(--purple-primary);
+      border-radius: 10px;
+      padding: 16px 20px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-main);
       line-height: 1.5;
     }
 
@@ -505,22 +524,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .evidence-item {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
       font-size: 13px;
       color: var(--text-muted);
+      font-weight: 500;
     }
 
     .evidence-check {
       color: var(--emerald);
-      font-weight: bold;
-      font-size: 14px;
+      font-weight: 800;
+      font-size: 15px;
     }
 
     .recommended-action-box {
-      background: rgba(59, 130, 246, 0.1);
-      border: 1px solid rgba(59, 130, 246, 0.35);
-      border-radius: 8px;
-      padding: 12px 18px;
+      background: #F3E8FF;
+      border: 1px solid #D8B4FE;
+      border-radius: 10px;
+      padding: 14px 20px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -528,19 +548,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     .action-code {
       font-family: var(--font-mono);
-      font-weight: 700;
-      color: #60a5fa;
-      font-size: 14px;
+      font-weight: 800;
+      color: var(--purple-primary);
+      font-size: 15px;
       letter-spacing: 0.8px;
     }
 
     .action-badge {
-      font-size: 11px;
-      padding: 3px 8px;
-      background: rgba(59, 130, 246, 0.2);
-      border-radius: 4px;
-      color: #93c5fd;
+      font-size: 12px;
+      padding: 4px 10px;
+      background: #FFFFFF;
+      border: 1px solid #D8B4FE;
+      border-radius: 6px;
+      color: var(--purple-hover);
       font-family: var(--font-mono);
+      font-weight: 600;
     }
 
     /* Action Buttons */
@@ -549,48 +571,53 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       gap: 14px;
       justify-content: flex-end;
       align-items: center;
-      margin-top: 24px;
-      padding-top: 20px;
+      margin-top: 26px;
+      padding-top: 22px;
       border-top: 1px solid var(--border-subtle);
     }
 
     .approver-input-wrap {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       margin-right: auto;
     }
 
     .approver-input-wrap label {
       font-size: 12px;
-      color: var(--text-muted);
+      color: var(--text-main);
       font-family: var(--font-mono);
+      font-weight: 700;
+      text-transform: uppercase;
     }
 
     .approver-input {
-      background: rgba(0, 0, 0, 0.4);
+      background: #FFFFFF;
       border: 1px solid var(--border-subtle);
-      border-radius: 6px;
-      padding: 8px 12px;
-      color: #ffffff;
-      font-size: 12px;
+      border-radius: 8px;
+      padding: 9px 14px;
+      color: var(--text-main);
+      font-size: 13px;
       font-family: var(--font-mono);
+      font-weight: 600;
       outline: none;
+      transition: all 0.2s ease;
     }
 
     .approver-input:focus {
-      border-color: var(--blue);
+      border-color: var(--purple-primary);
+      box-shadow: 0 0 0 3px var(--purple-glow);
     }
 
     .btn {
-      padding: 10px 22px;
-      border-radius: 8px;
+      padding: 11px 24px;
+      border-radius: 10px;
       font-size: 12px;
-      font-weight: 700;
+      font-weight: 800;
       font-family: var(--font-mono);
       letter-spacing: 1px;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
       display: inline-flex;
       align-items: center;
       gap: 8px;
@@ -599,81 +626,84 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     .btn-reject {
-      background: rgba(239, 68, 68, 0.15);
-      border: 1px solid rgba(239, 68, 68, 0.4);
-      color: #fca5a5;
+      background: var(--rose-bg);
+      border: 1px solid var(--rose-border);
+      color: var(--rose);
     }
 
     .btn-reject:hover:not(:disabled) {
-      background: rgba(239, 68, 68, 0.3);
-      box-shadow: 0 0 16px var(--rose-glow);
+      background: #FEE2E2;
+      box-shadow: 0 4px 12px var(--rose-glow);
     }
 
     .btn-approve {
-      background: rgba(16, 185, 129, 0.2);
-      border: 1px solid rgba(16, 185, 129, 0.5);
-      color: #6ee7b7;
+      background: var(--emerald);
+      color: #FFFFFF;
+      box-shadow: 0 4px 14px var(--emerald-glow);
     }
 
     .btn-approve:hover:not(:disabled) {
-      background: rgba(16, 185, 129, 0.35);
-      box-shadow: 0 0 20px var(--emerald-glow);
+      background: #047857;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px var(--emerald-glow);
     }
 
     .btn-execute {
-      background: rgba(59, 130, 246, 0.25);
-      border: 1px solid rgba(59, 130, 246, 0.6);
-      color: #93c5fd;
+      background: var(--purple-primary);
+      color: #FFFFFF;
+      box-shadow: 0 4px 14px var(--purple-glow);
     }
 
     .btn-execute:hover:not(:disabled) {
-      background: rgba(59, 130, 246, 0.4);
-      box-shadow: 0 0 20px var(--blue-glow);
+      background: var(--purple-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px var(--purple-glow);
     }
 
     .btn:disabled {
-      opacity: 0.4;
+      opacity: 0.45;
       cursor: not-allowed;
       box-shadow: none;
+      transform: none;
     }
 
     /* Remediation Timeline */
     .timeline-section {
-      padding: 24px 28px;
+      padding: 28px 32px;
     }
 
     .timeline-header {
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 800;
       letter-spacing: 1.2px;
       text-transform: uppercase;
       font-family: var(--font-mono);
-      color: var(--text-muted);
-      margin-bottom: 24px;
+      color: var(--text-main);
+      margin-bottom: 26px;
     }
 
     .timeline-steps {
       display: flex;
       flex-direction: column;
       position: relative;
-      padding-left: 20px;
+      padding-left: 24px;
     }
 
     .timeline-steps::before {
       content: '';
       position: absolute;
-      left: 7px;
+      left: 8px;
       top: 14px;
       bottom: 14px;
       width: 2px;
-      background: rgba(255, 255, 255, 0.1);
+      background: #E9D5FF;
     }
 
     .timeline-step {
       display: flex;
       align-items: flex-start;
-      gap: 18px;
-      padding-bottom: 24px;
+      gap: 20px;
+      padding-bottom: 26px;
       position: relative;
     }
 
@@ -682,37 +712,40 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     .step-marker {
-      width: 16px;
-      height: 16px;
+      width: 18px;
+      height: 18px;
       border-radius: 50%;
-      background: var(--bg-dark);
-      border: 2px solid var(--text-dim);
+      background: #FFFFFF;
+      border: 2px solid #C4B5FD;
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 2;
       flex-shrink: 0;
-      margin-left: -24px;
+      margin-left: -29px;
+      font-size: 11px;
+      font-weight: 800;
       transition: all 0.3s ease;
     }
 
     .timeline-step.completed .step-marker {
       border-color: var(--emerald);
       background: var(--emerald);
-      box-shadow: 0 0 10px var(--emerald);
+      color: #FFFFFF;
+      box-shadow: 0 0 10px var(--emerald-glow);
     }
 
     .timeline-step.active .step-marker {
-      border-color: var(--blue);
-      background: var(--blue);
-      box-shadow: 0 0 12px var(--blue);
-      animation: pulse-blue 1.5s infinite;
+      border-color: var(--purple-primary);
+      background: var(--purple-primary);
+      box-shadow: 0 0 14px var(--purple-glow);
+      animation: pulse-purple 1.8s infinite;
     }
 
-    @keyframes pulse-blue {
-      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
-      70% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
-      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+    @keyframes pulse-purple {
+      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.6); }
+      70% { transform: scale(1.1); box-shadow: 0 0 0 8px rgba(124, 58, 237, 0); }
+      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(124, 58, 237, 0); }
     }
 
     .step-content {
@@ -723,13 +756,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     .step-title {
       font-size: 14px;
-      font-weight: 600;
-      color: #ffffff;
+      font-weight: 700;
+      color: var(--text-main);
       font-family: var(--font-mono);
-    }
-
-    .timeline-step.completed .step-title {
-      color: #e5e7eb;
     }
 
     .timeline-step.waiting .step-title {
@@ -741,22 +770,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       color: var(--text-muted);
     }
 
-    /* Notification Banner */
+    /* Toast Notification */
     .toast-banner {
       position: fixed;
-      bottom: 24px;
-      right: 24px;
-      padding: 14px 20px;
-      border-radius: 10px;
-      background: rgba(17, 24, 39, 0.95);
+      bottom: 28px;
+      right: 28px;
+      padding: 16px 24px;
+      border-radius: 12px;
+      background: #FFFFFF;
       border: 1px solid var(--border-subtle);
-      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      box-shadow: 0 12px 36px rgba(124, 58, 237, 0.16);
       display: none;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
       font-size: 13px;
+      font-weight: 600;
       z-index: 100;
-      backdrop-filter: blur(10px);
     }
 
     .toast-banner.show {
@@ -769,12 +798,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       to { transform: translateY(0); opacity: 1; }
     }
 
-    /* Responsive */
     @media (max-width: 800px) {
       .metrics-bar { grid-template-columns: repeat(2, 1fr); }
       .dashboard-grid { grid-template-columns: 1fr; }
       .action-bar { flex-direction: column; align-items: stretch; }
-      .approver-input-wrap { margin-right: 0; margin-bottom: 10px; }
+      .approver-input-wrap { margin-right: 0; margin-bottom: 12px; }
     }
   </style>
 </head>
@@ -826,7 +854,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <section class="glass-panel" aria-label="Active Incidents">
         <div class="panel-header">
           <span>Incidents</span>
-          <span style="font-size: 11px; color: var(--rose);">1 ACTIVE</span>
+          <span style="font-size: 11px; color: var(--rose); font-weight: 800;">1 ACTIVE</span>
         </div>
         <div class="panel-body">
           <div class="incident-item">
@@ -844,7 +872,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <section class="glass-panel" aria-label="Service Health Status">
         <div class="panel-header">
           <span>Service Health</span>
-          <span style="font-size: 11px; color: var(--emerald);">ALL NORMAL</span>
+          <span style="font-size: 11px; color: var(--emerald); font-weight: 800;">ALL NORMAL</span>
         </div>
         <div class="panel-body">
           <div class="services-list">
@@ -992,7 +1020,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('toast-message').innerText = msg;
       document.getElementById('toast-icon').innerText = icon;
       toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 3500);
+      setTimeout(() => toast.classList.remove('show'), 4000);
     }
 
     async function initDashboard() {
@@ -1043,9 +1071,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           const rec = await res.json();
           currentApprovalId = rec.approval_id;
           console.log("Active Approval ID initialized:", currentApprovalId);
+          return currentApprovalId;
+        } else {
+          const err = await res.json().catch(() => ({}));
+          console.error("Failed to initialize approval record:", res.status, err);
+          return null;
         }
       } catch (err) {
-        console.warn('Approval creation fallback:', err);
+        console.error('Approval creation network error:', err);
+        return null;
       }
     }
 
@@ -1059,7 +1093,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       btnReject.disabled = true;
 
       try {
-        if (!currentApprovalId) await createOrFetchApproval();
+        if (!currentApprovalId) {
+          currentApprovalId = await createOrFetchApproval();
+        }
+
+        if (!currentApprovalId) {
+          showToast('Failed to create pending approval in backend.', '❌');
+          btnApprove.disabled = false;
+          btnReject.disabled = false;
+          return;
+        }
 
         const res = await fetch(`/api/v1/remediation/approvals/${currentApprovalId}/approve`, {
           method: 'POST',
@@ -1083,7 +1126,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
           btnExecute.disabled = false;
         } else {
-          const err = await res.json();
+          const err = await res.json().catch(() => ({ detail: 'Approval request failed' }));
           showToast(err.detail || 'Approval failed', '❌');
           btnApprove.disabled = false;
           btnReject.disabled = false;
@@ -1097,7 +1140,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     async function handleReject() {
       const rejector = document.getElementById('approver-name').value.trim() || 'Prabhu';
       try {
-        if (!currentApprovalId) await createOrFetchApproval();
+        if (!currentApprovalId) {
+          currentApprovalId = await createOrFetchApproval();
+        }
+
+        if (!currentApprovalId) {
+          showToast('No active approval found to reject.', '❌');
+          return;
+        }
 
         const res = await fetch(`/api/v1/remediation/approvals/${currentApprovalId}/reject`, {
           method: 'POST',
@@ -1154,7 +1204,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           // Update Status
           document.getElementById('system-status-text').innerText = 'SYSTEM RECOVERED';
         } else {
-          const err = await res.json();
+          const err = await res.json().catch(() => ({ detail: 'Execution dispatch failed' }));
           showToast(err.detail || 'Execution failed', '❌');
           btnExecute.disabled = false;
         }
