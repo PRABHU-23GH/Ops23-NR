@@ -48,5 +48,10 @@ output "bedrock_rca_policy_arn" {
   value       = aws_iam_policy.bedrock_rca_policy.arn
 }
 
+output "remediation_approvals_table_name" {
+  description = "Name of the DynamoDB table used for remediation approvals"
+  value       = aws_dynamodb_table.remediation_approvals.name
+}
+
 
 
