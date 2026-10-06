@@ -79,6 +79,8 @@ async def get_dashboard_overview(
 
     # Query persistent approval state to derive consistent operational status
     approval_status_val = "EXECUTED"
+    execution_status_val = "EXECUTED"
+    approved_by_val = "Prabhu"
     ssm_command_id_val = "74572c11-3061-40bf-bbed-c9ffa5ec9dea"
     try:
         storage = ApprovalStorage(
@@ -88,6 +90,8 @@ async def get_dashboard_overview(
         rec = storage.get_approval(DEFAULT_TARGET_APPROVAL_ID)
         if rec:
             approval_status_val = rec.approval_status.value
+            execution_status_val = rec.execution_status.value
+            approved_by_val = rec.approved_by or "Prabhu"
             if rec.ssm_command_id and rec.ssm_command_id != "NONE":
                 ssm_command_id_val = rec.ssm_command_id
     except Exception:
@@ -181,6 +185,10 @@ async def get_dashboard_overview(
         "resolved_incident": resolved_incident_data,
         "approval_id": DEFAULT_TARGET_APPROVAL_ID,
         "approval_status": approval_status_val,
+        "execution_status": execution_status_val,
+        "recommended_action": "RESTART_OPS23_SERVICE",
+        "target": "i-066478e6fd6dc22af",
+        "approved_by": approved_by_val,
         "ssm_command_id": ssm_command_id_val,
         "sample_rca": {
             "root_cause": "FastAPI service stopped responding to health checks",
@@ -195,6 +203,8 @@ async def get_dashboard_overview(
             "service": "ops23-nr.service",
             "decision": "ALLOWLISTED_RECOMMENDATION",
             "approval_status": approval_status_val,
+            "execution_status": execution_status_val,
+            "approved_by": approved_by_val,
         },
         "timeline": timeline,
         "audit_events": audit_events,
@@ -1347,11 +1357,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       setTimeout(() => toast.classList.remove('show'), 3500);
     }
 
+    let pollIntervalId = null;
+
     function applyOperationalState(approvalStatus) {
       const stateBadge = document.getElementById('state-badge');
       const btnApprove = document.getElementById('btn-approve');
       const btnReject = document.getElementById('btn-reject');
       const btnExecute = document.getElementById('btn-execute');
+
+      if (!stateBadge || !btnApprove || !btnExecute) return;
 
       stateBadge.className = 'state-pill ' + approvalStatus;
 
@@ -1359,34 +1373,116 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         stateBadge.innerText = 'PENDING APPROVAL';
         btnApprove.disabled = false;
         btnApprove.innerText = 'Approve';
-        btnReject.disabled = false;
+        if (btnReject) btnReject.disabled = false;
         btnExecute.disabled = true;
         btnExecute.innerText = 'Execute';
       } else if (approvalStatus === 'APPROVED') {
         stateBadge.innerText = 'APPROVED';
         btnApprove.disabled = true;
         btnApprove.innerText = 'Approved ✓';
-        btnReject.disabled = false;
+        if (btnReject) btnReject.disabled = false;
         btnExecute.disabled = false;
         btnExecute.innerText = 'Execute';
       } else if (approvalStatus === 'EXECUTING') {
         stateBadge.innerText = 'EXECUTING...';
         btnApprove.disabled = true;
-        btnReject.disabled = true;
+        btnApprove.innerText = 'Approved ✓';
+        if (btnReject) btnReject.disabled = true;
         btnExecute.disabled = true;
         btnExecute.innerText = 'EXECUTING...';
       } else if (approvalStatus === 'EXECUTED') {
         stateBadge.innerText = 'EXECUTED ✓';
         btnApprove.disabled = true;
         btnApprove.innerText = 'Approved ✓';
-        btnReject.disabled = true;
+        if (btnReject) btnReject.disabled = true;
         btnExecute.disabled = true;
         btnExecute.innerText = 'EXECUTED ✓';
       } else if (approvalStatus === 'REJECTED') {
         stateBadge.innerText = 'REJECTED';
         btnApprove.disabled = true;
-        btnReject.disabled = true;
+        btnApprove.innerText = 'Approve';
+        if (btnReject) btnReject.disabled = true;
         btnExecute.disabled = true;
+        btnExecute.innerText = 'Execute';
+      } else if (approvalStatus === 'EXPIRED') {
+        stateBadge.innerText = 'EXPIRED';
+        btnApprove.disabled = true;
+        btnApprove.innerText = 'Approve';
+        if (btnReject) btnReject.disabled = true;
+        btnExecute.disabled = true;
+        btnExecute.innerText = 'Execute';
+      }
+
+      // Synchronize timeline presentation
+      const step3 = document.getElementById('step-3');
+      const step4 = document.getElementById('step-4');
+      const step5 = document.getElementById('step-5');
+
+      if (approvalStatus === 'PENDING') {
+        if (step3) { step3.className = 'timeline-step active'; const m = step3.querySelector('.step-marker'); if (m) m.innerText = '●'; }
+        if (step4) { step4.className = 'timeline-step waiting'; const m = step4.querySelector('.step-marker'); if (m) m.innerText = '○'; }
+        if (step5) { step5.className = 'timeline-step waiting'; const m = step5.querySelector('.step-marker'); if (m) m.innerText = '○'; }
+      } else if (approvalStatus === 'APPROVED') {
+        if (step3) { step3.className = 'timeline-step completed'; const m = step3.querySelector('.step-marker'); if (m) m.innerText = '✓'; }
+        if (step4) { step4.className = 'timeline-step active'; const m = step4.querySelector('.step-marker'); if (m) m.innerText = '●'; }
+        if (step5) { step5.className = 'timeline-step waiting'; const m = step5.querySelector('.step-marker'); if (m) m.innerText = '○'; }
+      } else if (approvalStatus === 'EXECUTING') {
+        if (step3) { step3.className = 'timeline-step completed'; const m = step3.querySelector('.step-marker'); if (m) m.innerText = '✓'; }
+        if (step4) { step4.className = 'timeline-step active'; const m = step4.querySelector('.step-marker'); if (m) m.innerText = '⚡'; }
+        if (step5) { step5.className = 'timeline-step waiting'; const m = step5.querySelector('.step-marker'); if (m) m.innerText = '○'; }
+      } else if (approvalStatus === 'EXECUTED') {
+        if (step3) { step3.className = 'timeline-step completed'; const m = step3.querySelector('.step-marker'); if (m) m.innerText = '✓'; }
+        if (step4) { step4.className = 'timeline-step completed'; const m = step4.querySelector('.step-marker'); if (m) m.innerText = '✓'; }
+        if (step5) { step5.className = 'timeline-step completed'; const m = step5.querySelector('.step-marker'); if (m) m.innerText = '✓'; }
+      } else if (approvalStatus === 'REJECTED' || approvalStatus === 'EXPIRED') {
+        if (step3) { step3.className = 'timeline-step completed'; const m = step3.querySelector('.step-marker'); if (m) m.innerText = '✕'; }
+        if (step4) { step4.className = 'timeline-step waiting'; const m = step4.querySelector('.step-marker'); if (m) m.innerText = '○'; }
+        if (step5) { step5.className = 'timeline-step waiting'; const m = step5.querySelector('.step-marker'); if (m) m.innerText = '○'; }
+      }
+    }
+
+    async function refetchApprovalRecord() {
+      if (!currentApprovalId) return null;
+      try {
+        const res = await fetch(`/api/v1/remediation/approvals/${currentApprovalId}`, {
+          headers: authHeaders
+        });
+        if (res.ok) {
+          const rec = await res.json();
+          if (rec.approval_id) {
+            const el = document.getElementById('approval-id-display');
+            if (el) el.innerText = rec.approval_id;
+          }
+          if (rec.ssm_command_id && rec.ssm_command_id !== "NONE") {
+            const ssmEl = document.getElementById('ssm-id-display');
+            if (ssmEl) ssmEl.innerText = rec.ssm_command_id;
+          }
+          applyOperationalState(rec.approval_status);
+          handleExecutingPolling(rec.approval_status);
+          return rec;
+        }
+      } catch (err) {
+        console.error('Error refetching approval record:', err);
+      }
+      return null;
+    }
+
+    function handleExecutingPolling(status) {
+      if (status === 'EXECUTING') {
+        if (!pollIntervalId) {
+          pollIntervalId = setInterval(async () => {
+            const rec = await refetchApprovalRecord();
+            if (rec && rec.approval_status !== 'EXECUTING') {
+              clearInterval(pollIntervalId);
+              pollIntervalId = null;
+            }
+          }, 2000);
+        }
+      } else {
+        if (pollIntervalId) {
+          clearInterval(pollIntervalId);
+          pollIntervalId = null;
+        }
       }
     }
 
@@ -1406,11 +1502,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
           if (data.approval_status) {
             applyOperationalState(data.approval_status);
+            handleExecutingPolling(data.approval_status);
           }
           if (data.ssm_command_id) {
             document.getElementById('ssm-id-display').innerText = data.ssm_command_id;
           }
         }
+
+        await refetchApprovalRecord();
 
         const now = new Date();
         document.getElementById('last-updated-tag').innerText = 'Updated: ' + now.toTimeString().split(' ')[0] + ' UTC';
@@ -1421,6 +1520,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     async function handleApprove() {
       const approver = document.getElementById('approver-name').value.trim() || 'Prabhu';
+      const btnApprove = document.getElementById('btn-approve');
+      if (btnApprove) btnApprove.disabled = true;
+
       try {
         const res = await fetch(`/api/v1/remediation/approvals/${currentApprovalId}/approve`, {
           method: 'POST',
@@ -1429,18 +1531,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         });
         if (res.ok) {
           showToast(`Remediation approved by ${approver}`, '✅');
-          applyOperationalState('APPROVED');
         } else {
           const err = await res.json().catch(() => ({}));
           showToast(err.detail || 'Approval failed', '❌');
         }
       } catch (err) {
         showToast('Approval error: ' + err.message, '❌');
+      } finally {
+        await refetchApprovalRecord();
       }
     }
 
     async function handleReject() {
       const rejector = document.getElementById('approver-name').value.trim() || 'Prabhu';
+      const btnReject = document.getElementById('btn-reject');
+      if (btnReject) btnReject.disabled = true;
+
       try {
         const res = await fetch(`/api/v1/remediation/approvals/${currentApprovalId}/reject`, {
           method: 'POST',
@@ -1449,17 +1555,29 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         });
         if (res.ok) {
           showToast(`Remediation rejected by ${rejector}`, '🛑');
-          applyOperationalState('REJECTED');
+        } else {
+          const err = await res.json().catch(() => ({}));
+          showToast(err.detail || 'Rejection failed', '❌');
         }
       } catch (err) {
         showToast('Rejection error: ' + err.message, '❌');
+      } finally {
+        await refetchApprovalRecord();
       }
     }
 
     async function handleExecute() {
       const executor = document.getElementById('approver-name').value.trim() || 'Prabhu';
+      const btnExecute = document.getElementById('btn-execute');
+      if (btnExecute) {
+        btnExecute.disabled = true;
+        btnExecute.innerText = 'EXECUTING...';
+      }
+
       showToast('Dispatching to Phase 6 Remediation Lambda...', '⚡');
       applyOperationalState('EXECUTING');
+      handleExecutingPolling('EXECUTING');
+
       try {
         const res = await fetch(`/api/v1/remediation/approvals/${currentApprovalId}/execute`, {
           method: 'POST',
@@ -1467,15 +1585,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           body: JSON.stringify({ executed_by: executor })
         });
         if (res.ok) {
-          const rec = await res.json();
           showToast('SSM Command Executed', '🚀');
-          applyOperationalState(rec.approval_status);
         } else {
           const err = await res.json().catch(() => ({}));
           showToast(err.detail || 'Execution failed', '❌');
         }
       } catch (err) {
         showToast('Execution error: ' + err.message, '❌');
+      } finally {
+        const rec = await refetchApprovalRecord();
+        if (rec && rec.approval_status === 'EXECUTING') {
+          handleExecutingPolling('EXECUTING');
+        }
       }
     }
 

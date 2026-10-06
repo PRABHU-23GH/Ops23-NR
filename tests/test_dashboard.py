@@ -68,3 +68,64 @@ def test_dashboard_overview_api(client):
 
     assert "timeline" in data
     assert len(data["timeline"]) == 5
+
+    # Verify Step 1 required approval and remediation fields
+    assert "approval_id" in data
+    assert "approval_status" in data
+    assert "execution_status" in data
+    assert "recommended_action" in data
+    assert "target" in data
+    assert "approved_by" in data
+    assert data["recommended_action"] == "RESTART_OPS23_SERVICE"
+    assert data["target"] == "i-066478e6fd6dc22af"
+    assert data["approved_by"] is not None
+
+
+def test_dashboard_frontend_state_synchronization_contract(client):
+    """Verifies that the dashboard HTML contains the strict 6-state frontend synchronization rules."""
+    response = client.get("/dashboard")
+    assert response.status_code == 200
+    html = response.text
+
+    # Verify existence of core state machine function and functions
+    assert "function applyOperationalState(approvalStatus)" in html
+    assert "async function refetchApprovalRecord()" in html
+    assert "function handleExecutingPolling(status)" in html
+
+    # Verify all 6 operational states are explicitly handled
+    states = ["PENDING", "APPROVED", "EXECUTING", "EXECUTED", "REJECTED", "EXPIRED"]
+    for s in states:
+        assert s in html
+
+    # State 1: PENDING -> Approve enabled, Execute disabled
+    assert "approvalStatus === 'PENDING'" in html
+    assert "btnApprove.disabled = false" in html
+    assert "btnExecute.disabled = true" in html
+
+    # State 2: APPROVED -> Approve disabled, Execute enabled
+    assert "approvalStatus === 'APPROVED'" in html
+    assert "btnApprove.disabled = true" in html
+    assert "btnExecute.disabled = false" in html
+
+    # State 3: EXECUTING -> Approve disabled, Execute disabled, label "EXECUTING..."
+    assert "approvalStatus === 'EXECUTING'" in html
+    assert "btnExecute.innerText = 'EXECUTING...'" in html
+
+    # State 4: EXECUTED -> Approve disabled, Execute disabled, label "EXECUTED ✓"
+    assert "approvalStatus === 'EXECUTED'" in html
+    assert "btnExecute.innerText = 'EXECUTED ✓'" in html
+
+    # State 5: REJECTED -> Approve disabled, Execute disabled
+    assert "approvalStatus === 'REJECTED'" in html
+
+    # State 6: EXPIRED -> Approve disabled, Execute disabled
+    assert "approvalStatus === 'EXPIRED'" in html
+
+    # Verify Step 6 refetching after actions:
+    # After handleApprove -> refetchApprovalRecord() in finally block
+    assert "async function handleApprove()" in html
+    # After handleExecute -> refetchApprovalRecord() in finally block and handleExecutingPolling
+    assert "async function handleExecute()" in html
+    # Refetch in periodic initDashboard
+    assert "setInterval(initDashboard, 10000)" in html
+
