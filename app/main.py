@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from app.api.approvals import router as approvals_router
+from app.api.dashboard import router as dashboard_router
 from app.api.health import router as health_router
 from app.api.orders import router as orders_router
 from app.api.rca import router as rca_router
@@ -237,6 +238,7 @@ def create_app() -> FastAPI:
     application.include_router(simulate_router)
     application.include_router(rca_router)
     application.include_router(approvals_router)
+    application.include_router(dashboard_router)
 
     return application
 
