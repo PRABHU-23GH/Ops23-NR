@@ -43,4 +43,10 @@ output "remediation_webhook_url" {
   value       = "${aws_apigatewayv2_api.remediation_api.api_endpoint}/remediate"
 }
 
+output "bedrock_rca_policy_arn" {
+  description = "ARN of the dedicated Amazon Bedrock RCA IAM policy"
+  value       = aws_iam_policy.bedrock_rca_policy.arn
+}
+
+
 

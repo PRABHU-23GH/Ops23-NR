@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.health import router as health_router
 from app.api.orders import router as orders_router
+from app.api.rca import router as rca_router
 from app.api.simulate import SimulatedApplicationError, router as simulate_router
 from app.api.users import router as users_router
 from app.config import get_settings
@@ -233,8 +234,10 @@ def create_app() -> FastAPI:
     application.include_router(users_router)
     application.include_router(orders_router)
     application.include_router(simulate_router)
+    application.include_router(rca_router)
 
     return application
+
 
 
 # Default application instance for ASGI servers (uvicorn app.main:app)

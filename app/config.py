@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     ALLOW_PROCESS_TERMINATION: bool = False
     TESTING: bool = False
 
+    # Amazon Bedrock AI Root Cause Analysis (Phase 7)
+    BEDROCK_ENABLED: bool = False
+    BEDROCK_MODEL_ID: str = "anthropic.claude-3-haiku-20240307-v1:0"
+    BEDROCK_REGION: str = "ap-south-1"
+
+
 
 @lru_cache()
 def get_settings() -> Settings:
