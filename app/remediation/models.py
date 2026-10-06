@@ -101,6 +101,18 @@ class ExecuteRemediationRequest(BaseModel):
         return validate_human_identity(v)
 
 
+class ReconcileRequest(BaseModel):
+    """Payload to safely reconcile an existing EXECUTING remediation record."""
+    reconciled_by: str = Field(default="system", min_length=1, description="Identity or operator performing reconciliation")
+    ssm_command_id: Optional[str] = Field(default=None, description="Optional known SSM RunCommand ID if already observed")
+
+    @field_validator("reconciled_by")
+    @classmethod
+    def sanitize_reconciler(cls, v: str) -> str:
+        cleaned = (v or "system").strip()
+        return cleaned or "system"
+
+
 class ApprovalRecord(BaseModel):
     """Persistent approval and audit entity stored in DynamoDB."""
     approval_id: str = Field(..., description="Primary Key: UUID of the approval record")
@@ -122,7 +134,12 @@ class ApprovalRecord(BaseModel):
     rejected_at: Optional[str] = Field(default=None, description="ISO 8601 UTC rejection timestamp")
     rejection_reason: Optional[str] = Field(default=None, description="Rejection reason")
     execution_status: ExecutionStatus = Field(default=ExecutionStatus.NOT_EXECUTED, description="Execution status")
-    execution_result: Optional[Dict[str, Any]] = Field(default=None, description="Result payload from Phase 6 Lambda")
+    execution_started_at: Optional[str] = Field(default=None, description="ISO 8601 UTC timestamp when execution was dispatched")
+    execution_completed_at: Optional[str] = Field(default=None, description="ISO 8601 UTC timestamp when execution completed or verified")
+    reconciled_at: Optional[str] = Field(default=None, description="ISO 8601 UTC timestamp of reconciliation if applicable")
+    reconciled_by: Optional[str] = Field(default=None, description="Identity or operator who performed reconciliation")
+    reconciliation_evidence: Optional[Dict[str, Any]] = Field(default=None, description="Evidence gathered during reconciliation")
+    execution_result: Optional[Dict[str, Any]] = Field(default=None, description="Result payload from Phase 6 Lambda or SSM")
     ssm_command_id: Optional[str] = Field(default=None, description="SSM RunCommand CommandId if executed")
     error_message: Optional[str] = Field(default=None, description="Error details if execution or approval failed")
     evidence: List[str] = Field(default_factory=list, description="Diagnostic evidence points")
@@ -161,6 +178,11 @@ class ApprovalResponse(BaseModel):
     rejected_at: Optional[str] = None
     rejection_reason: Optional[str] = None
     execution_status: ExecutionStatus
+    execution_started_at: Optional[str] = None
+    execution_completed_at: Optional[str] = None
+    reconciled_at: Optional[str] = None
+    reconciled_by: Optional[str] = None
+    reconciliation_evidence: Optional[Dict[str, Any]] = None
     execution_result: Optional[Dict[str, Any]] = None
     ssm_command_id: Optional[str] = None
     error_message: Optional[str] = None
@@ -189,8 +211,14 @@ class ApprovalResponse(BaseModel):
             rejected_at=record.rejected_at,
             rejection_reason=record.rejection_reason,
             execution_status=record.execution_status,
+            execution_started_at=record.execution_started_at,
+            execution_completed_at=record.execution_completed_at,
+            reconciled_at=record.reconciled_at,
+            reconciled_by=record.reconciled_by,
+            reconciliation_evidence=record.reconciliation_evidence,
             execution_result=record.execution_result,
             ssm_command_id=record.ssm_command_id,
             error_message=record.error_message,
             reasoning_summary=record.reasoning_summary,
         )
+

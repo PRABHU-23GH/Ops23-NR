@@ -108,7 +108,7 @@ class InMemoryApprovalStorage(ApprovalStorage):
         self.items[approval_id] = record
         return True, record.model_copy(deep=True), None
 
-    def transition_to_executing(self, approval_id: str):
+    def transition_to_executing(self, approval_id: str, execution_started_at=None):
         record = self.items.get(approval_id)
         if not record:
             return False, None, "Not found"
@@ -117,10 +117,11 @@ class InMemoryApprovalStorage(ApprovalStorage):
 
         record.approval_status = ApprovalStatus.EXECUTING
         record.execution_status = ExecutionStatus.EXECUTING
+        record.execution_started_at = execution_started_at
         self.items[approval_id] = record
         return True, record.model_copy(deep=True), None
 
-    def transition_to_executed(self, approval_id: str, execution_result: dict, ssm_command_id=None):
+    def transition_to_executed(self, approval_id: str, execution_result: dict, ssm_command_id=None, execution_completed_at=None):
         record = self.items.get(approval_id)
         if not record or record.approval_status != ApprovalStatus.EXECUTING:
             return False, None, "Invalid state"
@@ -128,10 +129,11 @@ class InMemoryApprovalStorage(ApprovalStorage):
         record.execution_status = ExecutionStatus.EXECUTED
         record.execution_result = execution_result
         record.ssm_command_id = ssm_command_id
+        record.execution_completed_at = execution_completed_at
         self.items[approval_id] = record
         return True, record.model_copy(deep=True), None
 
-    def transition_to_execution_failed(self, approval_id: str, error_message: str, execution_result=None):
+    def transition_to_execution_failed(self, approval_id: str, error_message: str, execution_result=None, execution_completed_at=None):
         record = self.items.get(approval_id)
         if not record:
             return False, None, "Not found"
@@ -139,6 +141,51 @@ class InMemoryApprovalStorage(ApprovalStorage):
         record.execution_status = ExecutionStatus.EXECUTION_FAILED
         record.error_message = error_message
         record.execution_result = execution_result
+        record.execution_completed_at = execution_completed_at
+        self.items[approval_id] = record
+        return True, record.model_copy(deep=True), None
+
+    def transition_to_reconciled_executed(
+        self, approval_id: str, ssm_command_id: str, execution_result: dict, reconciled_by: str, reconciled_at: str, evidence=None
+    ):
+        record = self.items.get(approval_id)
+        if not record:
+            return False, None, "Not found"
+        if record.approval_status == ApprovalStatus.EXECUTED:
+            return True, record.model_copy(deep=True), "Already reconciled as EXECUTED"
+        if record.approval_status != ApprovalStatus.EXECUTING:
+            return False, record, f"Cannot reconcile: status is {record.approval_status.value}"
+
+        record.approval_status = ApprovalStatus.EXECUTED
+        record.execution_status = ExecutionStatus.EXECUTED
+        record.ssm_command_id = ssm_command_id
+        record.execution_result = execution_result
+        record.reconciled_by = reconciled_by
+        record.reconciled_at = reconciled_at
+        record.execution_completed_at = reconciled_at
+        record.reconciliation_evidence = evidence
+        self.items[approval_id] = record
+        return True, record.model_copy(deep=True), None
+
+    def transition_to_reconciled_failed(
+        self, approval_id: str, error_message: str, reconciled_by: str, reconciled_at: str, ssm_command_id=None, evidence=None
+    ):
+        record = self.items.get(approval_id)
+        if not record:
+            return False, None, "Not found"
+        if record.approval_status == ApprovalStatus.EXECUTION_FAILED:
+            return True, record.model_copy(deep=True), "Already reconciled as EXECUTION_FAILED"
+        if record.approval_status != ApprovalStatus.EXECUTING:
+            return False, record, f"Cannot reconcile: status is {record.approval_status.value}"
+
+        record.approval_status = ApprovalStatus.EXECUTION_FAILED
+        record.execution_status = ExecutionStatus.EXECUTION_FAILED
+        record.error_message = error_message
+        record.ssm_command_id = ssm_command_id
+        record.reconciled_by = reconciled_by
+        record.reconciled_at = reconciled_at
+        record.execution_completed_at = reconciled_at
+        record.reconciliation_evidence = evidence
         self.items[approval_id] = record
         return True, record.model_copy(deep=True), None
 

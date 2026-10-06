@@ -24,6 +24,7 @@ from app.remediation.models import (
     CreateApprovalRequest,
     ExecuteRemediationRequest,
     ExecutionStatus,
+    ReconcileRequest,
     RejectRequest,
 )
 from app.remediation.state_machine import assert_transition_allowed, validate_transition
@@ -58,6 +59,7 @@ class RemediationApprovalService:
         settings: Optional[Settings] = None,
         storage: Optional[ApprovalStorage] = None,
         lambda_client: Any = None,
+        ssm_client: Any = None,
     ):
         self.settings = settings or get_settings()
         self.storage = storage or ApprovalStorage(
@@ -65,6 +67,7 @@ class RemediationApprovalService:
             region_name=getattr(self.settings, "AWS_REGION", "ap-south-1"),
         )
         self._lambda_client = lambda_client
+        self._ssm_client = ssm_client
 
     @property
     def lambda_client(self) -> Any:
@@ -72,6 +75,13 @@ class RemediationApprovalService:
             region = getattr(self.settings, "AWS_REGION", "ap-south-1")
             self._lambda_client = boto3.client("lambda", region_name=region)
         return self._lambda_client
+
+    @property
+    def ssm_client(self) -> Any:
+        if self._ssm_client is None:
+            region = getattr(self.settings, "AWS_REGION", "ap-south-1")
+            self._ssm_client = boto3.client("ssm", region_name=region)
+        return self._ssm_client
 
     def validate_safety_contract(self, request: CreateApprovalRequest) -> Tuple[bool, str]:
         """Validates that proposed recommendation strictly complies with Phase 7 allowlist."""
@@ -306,7 +316,11 @@ class RemediationApprovalService:
             raise ValueError("Stored approval violates deterministic safety allowlist.")
 
         # Atomic transition to EXECUTING (locks out concurrent execute requests)
-        success, locked_record, err = self.storage.transition_to_executing(approval_id)
+        exec_start_iso = datetime.now(timezone.utc).isoformat()
+        success, locked_record, err = self.storage.transition_to_executing(
+            approval_id=approval_id,
+            execution_started_at=exec_start_iso,
+        )
         if not success or not locked_record:
             raise RuntimeError(f"Concurrent execution lock failed: {err}")
 
@@ -319,6 +333,7 @@ class RemediationApprovalService:
                 "action": record.recommended_action,
                 "target": record.target,
                 "service": record.service,
+                "execution_started_at": exec_start_iso,
             },
         )
 
@@ -351,7 +366,6 @@ class RemediationApprovalService:
 
             # Check if Lambda returned HTTP 200 proxy response
             if response_status == 200:
-                # If Lambda handler returned API Gateway format {"statusCode": 200, "body": "..."}
                 inner_body = result_data
                 if isinstance(result_data, dict) and "body" in result_data and isinstance(result_data["body"], str):
                     try:
@@ -366,11 +380,13 @@ class RemediationApprovalService:
                     else None
                 )
 
+                completed_iso = datetime.now(timezone.utc).isoformat()
                 # Record successful execution
                 _, executed_record, _ = self.storage.transition_to_executed(
                     approval_id=approval_id,
                     execution_result=inner_body if isinstance(inner_body, dict) else {"result": inner_body},
                     ssm_command_id=ssm_cmd_id,
+                    execution_completed_at=completed_iso,
                 )
 
                 emit_audit_event(
@@ -382,32 +398,241 @@ class RemediationApprovalService:
                         "target": record.target,
                         "ssm_command_id": ssm_cmd_id,
                         "status": "SUCCESS",
+                        "execution_completed_at": completed_iso,
                     },
                 )
                 return executed_record or locked_record
 
             else:
+                completed_iso = datetime.now(timezone.utc).isoformat()
                 err_msg = f"Remediation Lambda invocation failed with status {response_status}: {raw_result}"
-                self.storage.transition_to_execution_failed(approval_id, err_msg, result_data)
+                self.storage.transition_to_execution_failed(
+                    approval_id,
+                    err_msg,
+                    result_data,
+                    execution_completed_at=completed_iso,
+                )
                 emit_audit_event(
                     "remediation_execution_failed",
                     {
                         "approval_id": approval_id,
                         "incident_id": record.incident_id,
                         "error": err_msg,
+                        "execution_completed_at": completed_iso,
                     },
                 )
                 raise RuntimeError(err_msg)
 
         except Exception as e:
+            completed_iso = datetime.now(timezone.utc).isoformat()
             err_msg = f"Execution error: {str(e)}"
-            self.storage.transition_to_execution_failed(approval_id, err_msg)
+            self.storage.transition_to_execution_failed(
+                approval_id,
+                err_msg,
+                execution_completed_at=completed_iso,
+            )
             emit_audit_event(
                 "remediation_execution_failed",
                 {
                     "approval_id": approval_id,
                     "incident_id": record.incident_id,
                     "error": err_msg,
+                    "execution_completed_at": completed_iso,
                 },
             )
             raise
+
+    def check_application_health(self, health_url: Optional[str] = None) -> Tuple[bool, Dict[str, Any]]:
+        """Performs a non-invasive GET to verify application health status.
+        
+        Returns (is_healthy, details).
+        """
+        import urllib.request
+        target_url = health_url or getattr(self.settings, "HEALTH_CHECK_URL", "http://127.0.0.1:8000/health")
+        try:
+            req = urllib.request.Request(target_url, headers={"User-Agent": "Ops23-Reconciler"})
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                status_code = resp.getcode()
+                raw_data = resp.read().decode("utf-8")
+                try:
+                    body = json.loads(raw_data)
+                except Exception:
+                    body = {"raw": raw_data}
+                is_healthy = status_code == 200
+                return is_healthy, {"status_code": status_code, "body": body}
+        except Exception as err:
+            return False, {"error": str(err)}
+
+    def reconcile_execution(
+        self,
+        approval_id: str,
+        request: Optional[ReconcileRequest] = None,
+        health_checker: Optional[Any] = None,
+    ) -> ApprovalRecord:
+        """Safely reconciles an existing EXECUTING approval against observed SSM and health evidence.
+        
+        SAFETY GUARANTEES:
+        - NEVER dispatches a new SSM command (read-only get_command_invocation / list_command_invocations only).
+        - NEVER invokes the remediation Lambda.
+        - NEVER restarts the service or runs shell commands.
+        - NEVER bypasses approval or modifies unapproved records.
+        - NEVER weakens replay protection.
+        """
+        record = self.storage.get_approval(approval_id)
+        if not record:
+            raise KeyError(f"Remediation approval '{approval_id}' not found.")
+
+        reconciler = (request.reconciled_by if request else "system") or "system"
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # Idempotency: if already in a terminal state, return safely
+        if record.approval_status == ApprovalStatus.EXECUTED:
+            return record
+
+        if record.approval_status == ApprovalStatus.EXECUTION_FAILED:
+            return record
+
+        # Strict state validation: only EXECUTING records can be reconciled
+        if record.approval_status != ApprovalStatus.EXECUTING:
+            raise ValueError(
+                f"Cannot reconcile approval '{approval_id}': status is {record.approval_status.value} (must be EXECUTING)."
+            )
+
+        emit_audit_event(
+            "remediation_reconciliation_started",
+            {
+                "approval_id": approval_id,
+                "incident_id": record.incident_id,
+                "target": record.target,
+                "reconciled_by": reconciler,
+                "timestamp": now_iso,
+            },
+        )
+
+        # 1. Determine candidate SSM Command ID
+        candidate_cmd_id = None
+        if request and request.ssm_command_id:
+            candidate_cmd_id = request.ssm_command_id.strip()
+        elif record.ssm_command_id and record.ssm_command_id != "NONE":
+            candidate_cmd_id = record.ssm_command_id.strip()
+
+        # If not known, query SSM for recent command invocations on target instance
+        if not candidate_cmd_id:
+            try:
+                invocations_resp = self.ssm_client.list_command_invocations(
+                    InstanceId=record.target,
+                    MaxResults=10,
+                    Details=True,
+                )
+                invocations = invocations_resp.get("CommandInvocations", [])
+                for inv in invocations:
+                    doc_name = inv.get("DocumentName", "")
+                    if doc_name == "AWS-RunShellScript":
+                        candidate_cmd_id = inv.get("CommandId")
+                        break
+            except Exception as ssm_lookup_err:
+                app_logger.warning(f"Could not list SSM command invocations for {record.target}: {ssm_lookup_err}")
+
+        # 2. Query SSM invocation status if command ID is available
+        ssm_status = "UNKNOWN"
+        ssm_details = {}
+        if candidate_cmd_id:
+            try:
+                inv_resp = self.ssm_client.get_command_invocation(
+                    CommandId=candidate_cmd_id,
+                    InstanceId=record.target,
+                )
+                ssm_status = inv_resp.get("Status", "UNKNOWN")
+                ssm_details = {
+                    "command_id": candidate_cmd_id,
+                    "status": ssm_status,
+                    "response_code": inv_resp.get("ResponseCode"),
+                    "status_details": inv_resp.get("StatusDetails"),
+                    "execution_start_time": str(inv_resp.get("ExecutionStartDateTime", "")),
+                    "execution_end_time": str(inv_resp.get("ExecutionEndDateTime", "")),
+                }
+            except Exception as ssm_get_err:
+                ssm_details = {"command_id": candidate_cmd_id, "error": str(ssm_get_err)}
+                app_logger.warning(f"Error querying SSM command {candidate_cmd_id}: {ssm_get_err}")
+
+        # 3. Verify application health
+        if health_checker:
+            is_healthy, health_info = health_checker()
+        else:
+            is_healthy, health_info = self.check_application_health()
+
+        evidence = {
+            "ssm_command_id": candidate_cmd_id,
+            "ssm_status": ssm_status,
+            "ssm_details": ssm_details,
+            "health_status": "healthy" if is_healthy else "unhealthy",
+            "health_info": health_info,
+            "observed_at": now_iso,
+        }
+
+        # 4. State transition based on verified evidence
+        if ssm_status == "Success" and is_healthy:
+            exec_result = {
+                "reconciled": True,
+                "ssm_command_id": candidate_cmd_id,
+                "ssm_status": ssm_status,
+                "health_verification": health_info,
+            }
+            success, updated_record, err = self.storage.transition_to_reconciled_executed(
+                approval_id=approval_id,
+                ssm_command_id=candidate_cmd_id,
+                execution_result=exec_result,
+                reconciled_by=reconciler,
+                reconciled_at=now_iso,
+                evidence=evidence,
+            )
+            if not success or not updated_record:
+                raise RuntimeError(f"Failed to transition to reconciled EXECUTED: {err}")
+
+            emit_audit_event(
+                "remediation_reconciliation_completed",
+                {
+                    "approval_id": approval_id,
+                    "incident_id": record.incident_id,
+                    "ssm_command_id": candidate_cmd_id,
+                    "execution_status": "EXECUTED",
+                    "health_status": "healthy",
+                    "reconciled_by": reconciler,
+                    "timestamp": now_iso,
+                },
+            )
+            return updated_record
+
+        elif ssm_status in ("Failed", "Cancelled", "TimedOut"):
+            err_msg = f"Observed SSM execution terminal failure: status={ssm_status}"
+            success, updated_record, err = self.storage.transition_to_reconciled_failed(
+                approval_id=approval_id,
+                error_message=err_msg,
+                ssm_command_id=candidate_cmd_id,
+                reconciled_by=reconciler,
+                reconciled_at=now_iso,
+                evidence=evidence,
+            )
+            if not success or not updated_record:
+                raise RuntimeError(f"Failed to transition to reconciled EXECUTION_FAILED: {err}")
+
+            emit_audit_event(
+                "remediation_reconciliation_failed",
+                {
+                    "approval_id": approval_id,
+                    "incident_id": record.incident_id,
+                    "ssm_command_id": candidate_cmd_id,
+                    "error": err_msg,
+                    "reconciled_by": reconciler,
+                    "timestamp": now_iso,
+                },
+            )
+            return updated_record
+
+        else:
+            # Command still InProgress, Pending, Delayed, or missing command ID / health evidence insufficient
+            app_logger.info(
+                f"Reconciliation for approval {approval_id} remains EXECUTING. "
+                f"SSM status='{ssm_status}', is_healthy={is_healthy}"
+            )
+            return record

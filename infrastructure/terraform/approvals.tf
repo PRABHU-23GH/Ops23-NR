@@ -60,6 +60,17 @@ resource "aws_iam_policy" "remediation_approval_policy" {
           "lambda:InvokeFunction"
         ]
         Resource = aws_lambda_function.remediation_lambda.arn
+      },
+      {
+        Sid    = "AllowSSMCommandStatusObservationOnly"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetCommandInvocation",
+          "ssm:ListCommands",
+          "ssm:ListCommandInvocations",
+          "ssm:DescribeInstanceInformation"
+        ]
+        Resource = "*"
       }
     ]
   })

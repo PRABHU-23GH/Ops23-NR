@@ -19,6 +19,7 @@ from app.remediation.models import (
     ApproveRequest,
     CreateApprovalRequest,
     ExecuteRemediationRequest,
+    ReconcileRequest,
     RejectRequest,
     validate_human_identity,
 )
@@ -271,3 +272,45 @@ async def execute_remediation(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Remediation execution dispatch failed: {str(e)}",
         )
+
+
+@router.post(
+    "/{approval_id}/reconcile",
+    response_model=ApprovalResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Safely Reconcile Remediation State",
+    description=(
+        "Safely reconciles an existing EXECUTING approval record against verified SSM execution "
+        "and application health evidence without dispatching any new remediation."
+    ),
+)
+async def reconcile_remediation(
+    approval_id: str,
+    body: Optional[ReconcileRequest] = None,
+    auth_identity: Optional[str] = Depends(verify_approval_auth),
+    service: RemediationApprovalService = Depends(get_approval_service),
+) -> ApprovalResponse:
+    req = body or ReconcileRequest(reconciled_by=auth_identity or "system")
+    if auth_identity and (not req.reconciled_by or req.reconciled_by == "system"):
+        req.reconciled_by = auth_identity
+
+    try:
+        record = service.reconcile_execution(approval_id, req)
+        return ApprovalResponse.from_record(record)
+    except KeyError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error reconciling remediation {approval_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Remediation reconciliation failed: {str(e)}",
+        )
+

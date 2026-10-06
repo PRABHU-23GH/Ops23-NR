@@ -162,16 +162,19 @@ class ApprovalStorage:
     def transition_to_executing(
         self,
         approval_id: str,
+        execution_started_at: Optional[str] = None,
     ) -> Tuple[bool, Optional[ApprovalRecord], Optional[str]]:
         """Atomically locks the approval record from APPROVED to EXECUTING to prevent concurrent execution."""
+        started_iso = execution_started_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         try:
             response = self.table.update_item(
                 Key={"approval_id": approval_id},
-                UpdateExpression="SET approval_status = :executing, execution_status = :executing_status",
+                UpdateExpression="SET approval_status = :executing, execution_status = :executing_status, execution_started_at = :started_at",
                 ConditionExpression="attribute_exists(approval_id) AND approval_status = :approved",
                 ExpressionAttributeValues={
                     ":executing": ApprovalStatus.EXECUTING.value,
                     ":executing_status": ExecutionStatus.EXECUTING.value,
+                    ":started_at": started_iso,
                     ":approved": ApprovalStatus.APPROVED.value,
                 },
                 ReturnValues="ALL_NEW",
@@ -192,18 +195,21 @@ class ApprovalStorage:
         approval_id: str,
         execution_result: Dict[str, Any],
         ssm_command_id: Optional[str] = None,
+        execution_completed_at: Optional[str] = None,
     ) -> Tuple[bool, Optional[ApprovalRecord], Optional[str]]:
         """Transitions state from EXECUTING to EXECUTED upon Lambda success."""
+        completed_iso = execution_completed_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         try:
             response = self.table.update_item(
                 Key={"approval_id": approval_id},
-                UpdateExpression="SET approval_status = :executed, execution_status = :executed_status, execution_result = :res, ssm_command_id = :cmd_id",
+                UpdateExpression="SET approval_status = :executed, execution_status = :executed_status, execution_result = :res, ssm_command_id = :cmd_id, execution_completed_at = :completed_at",
                 ConditionExpression="attribute_exists(approval_id) AND approval_status = :executing",
                 ExpressionAttributeValues={
                     ":executed": ApprovalStatus.EXECUTED.value,
                     ":executed_status": ExecutionStatus.EXECUTED.value,
                     ":res": execution_result,
                     ":cmd_id": ssm_command_id or "NONE",
+                    ":completed_at": completed_iso,
                     ":executing": ApprovalStatus.EXECUTING.value,
                 },
                 ReturnValues="ALL_NEW",
@@ -219,18 +225,21 @@ class ApprovalStorage:
         approval_id: str,
         error_message: str,
         execution_result: Optional[Dict[str, Any]] = None,
+        execution_completed_at: Optional[str] = None,
     ) -> Tuple[bool, Optional[ApprovalRecord], Optional[str]]:
         """Transitions state from EXECUTING to EXECUTION_FAILED upon Lambda or SSM failure."""
+        completed_iso = execution_completed_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         try:
             response = self.table.update_item(
                 Key={"approval_id": approval_id},
-                UpdateExpression="SET approval_status = :failed, execution_status = :failed_status, error_message = :err, execution_result = :res",
+                UpdateExpression="SET approval_status = :failed, execution_status = :failed_status, error_message = :err, execution_result = :res, execution_completed_at = :completed_at",
                 ConditionExpression="attribute_exists(approval_id) AND approval_status = :executing",
                 ExpressionAttributeValues={
                     ":failed": ApprovalStatus.EXECUTION_FAILED.value,
                     ":failed_status": ExecutionStatus.EXECUTION_FAILED.value,
                     ":err": error_message,
                     ":res": execution_result or {},
+                    ":completed_at": completed_iso,
                     ":executing": ApprovalStatus.EXECUTING.value,
                 },
                 ReturnValues="ALL_NEW",
@@ -239,6 +248,100 @@ class ApprovalStorage:
             return True, updated_record, None
         except ClientError as e:
             logger.error(f"Failed to record execution failure for {approval_id}: {e}")
+            return False, None, str(e)
+
+    def transition_to_reconciled_executed(
+        self,
+        approval_id: str,
+        ssm_command_id: str,
+        execution_result: Dict[str, Any],
+        reconciled_by: str,
+        reconciled_at: str,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, Optional[ApprovalRecord], Optional[str]]:
+        """Atomically transitions state from EXECUTING to EXECUTED via post-remediation reconciliation."""
+        try:
+            response = self.table.update_item(
+                Key={"approval_id": approval_id},
+                UpdateExpression=(
+                    "SET approval_status = :executed, execution_status = :executed_status, "
+                    "ssm_command_id = :cmd_id, execution_result = :res, "
+                    "execution_completed_at = :completed_at, reconciled_at = :rec_at, "
+                    "reconciled_by = :rec_by, reconciliation_evidence = :ev"
+                ),
+                ConditionExpression="attribute_exists(approval_id) AND approval_status = :executing",
+                ExpressionAttributeValues={
+                    ":executed": ApprovalStatus.EXECUTED.value,
+                    ":executed_status": ExecutionStatus.EXECUTED.value,
+                    ":cmd_id": ssm_command_id,
+                    ":res": execution_result,
+                    ":completed_at": reconciled_at,
+                    ":rec_at": reconciled_at,
+                    ":rec_by": reconciled_by,
+                    ":ev": evidence or {},
+                    ":executing": ApprovalStatus.EXECUTING.value,
+                },
+                ReturnValues="ALL_NEW",
+            )
+            updated_record = _from_dynamodb_dict(response["Attributes"])
+            return True, updated_record, None
+        except ClientError as e:
+            code = e.response["Error"]["Code"]
+            if code == "ConditionalCheckFailedException":
+                current = self.get_approval(approval_id)
+                if not current:
+                    return False, None, f"Approval '{approval_id}' not found."
+                if current.approval_status == ApprovalStatus.EXECUTED:
+                    return True, current, "Already reconciled as EXECUTED"
+                return False, current, f"Cannot reconcile: Current state is {current.approval_status.value}."
+            logger.error(f"Failed to record reconciled executed status for {approval_id}: {e}")
+            return False, None, str(e)
+
+    def transition_to_reconciled_failed(
+        self,
+        approval_id: str,
+        error_message: str,
+        reconciled_by: str,
+        reconciled_at: str,
+        ssm_command_id: Optional[str] = None,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, Optional[ApprovalRecord], Optional[str]]:
+        """Atomically transitions state from EXECUTING to EXECUTION_FAILED via post-remediation reconciliation."""
+        try:
+            response = self.table.update_item(
+                Key={"approval_id": approval_id},
+                UpdateExpression=(
+                    "SET approval_status = :failed, execution_status = :failed_status, "
+                    "error_message = :err, ssm_command_id = :cmd_id, "
+                    "reconciled_at = :rec_at, reconciled_by = :rec_by, "
+                    "reconciliation_evidence = :ev, execution_completed_at = :completed_at"
+                ),
+                ConditionExpression="attribute_exists(approval_id) AND approval_status = :executing",
+                ExpressionAttributeValues={
+                    ":failed": ApprovalStatus.EXECUTION_FAILED.value,
+                    ":failed_status": ExecutionStatus.EXECUTION_FAILED.value,
+                    ":err": error_message,
+                    ":cmd_id": ssm_command_id or "NONE",
+                    ":completed_at": reconciled_at,
+                    ":rec_at": reconciled_at,
+                    ":rec_by": reconciled_by,
+                    ":ev": evidence or {},
+                    ":executing": ApprovalStatus.EXECUTING.value,
+                },
+                ReturnValues="ALL_NEW",
+            )
+            updated_record = _from_dynamodb_dict(response["Attributes"])
+            return True, updated_record, None
+        except ClientError as e:
+            code = e.response["Error"]["Code"]
+            if code == "ConditionalCheckFailedException":
+                current = self.get_approval(approval_id)
+                if not current:
+                    return False, None, f"Approval '{approval_id}' not found."
+                if current.approval_status == ApprovalStatus.EXECUTION_FAILED:
+                    return True, current, "Already reconciled as EXECUTION_FAILED"
+                return False, current, f"Cannot reconcile: Current state is {current.approval_status.value}."
+            logger.error(f"Failed to record reconciled failure for {approval_id}: {e}")
             return False, None, str(e)
 
     def transition_to_expired(
